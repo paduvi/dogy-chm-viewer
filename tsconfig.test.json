@@ -19,6 +19,7 @@
   "include": [
     "src/core/**/*",
     "src/shared/**/*",
+    "src/renderer/env.d.ts",
     "tests/**/*"
   ]
 }

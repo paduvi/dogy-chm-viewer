@@ -24,7 +24,8 @@ function buildRecentSubmenu(
 
 export function buildMenu(
   win: BrowserWindow | null,
-  openFile: (filePath: string) => void
+  openFile: (filePath: string) => void,
+  openDialog: (parentWin?: BrowserWindow) => Promise<void> = () => Promise.resolve()
 ): void {
   const template: MenuItemConstructorOptions[] = [
     // ── Application ──────────────────────────────────────────────────────────
@@ -51,10 +52,7 @@ export function buildMenu(
           label: 'Open…',
           accelerator: 'CmdOrCtrl+O',
           // Show the dialog in main and open the result in a new/empty window.
-          click: () => {
-            const { showOpenDialogAndOpen } = require('./index') as typeof import('./index')
-            void showOpenDialogAndOpen(win ?? undefined)
-          }
+          click: () => { void openDialog(win ?? undefined) }
         },
         {
           label: 'Open Recent',

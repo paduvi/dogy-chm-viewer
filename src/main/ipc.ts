@@ -55,7 +55,7 @@ export function registerIpcHandlers(): void {
       const win = BrowserWindow.fromWebContents(event.sender)
       if (win) {
         win.setTitle(doc.title || 'Dogy CHM Viewer')
-        buildMenu(win, openFileInWindow)
+        buildMenu(win, openFileInWindow, showOpenDialogAndOpen)
       }
 
       return { ok: true, value: doc }

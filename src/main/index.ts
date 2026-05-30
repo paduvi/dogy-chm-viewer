@@ -56,7 +56,7 @@ function openFileInWindow(filePath: string): void {
     // Store for the mount signal: renderer will send RENDERER_MOUNTED when its
     // useEffect runs and the onLoadFile listener is wired up.
     pendingFiles.set(win.webContents.id, filePath)
-    buildMenu(win, openFileInWindow)
+    buildMenu(win, openFileInWindow, showOpenDialogAndOpen)
     win.focus()
   }
 }
@@ -107,7 +107,7 @@ void app.whenReady().then(() => {
   } else {
     // Normal launch: open an empty window ready for the user to pick a file.
     const win = createWindow()
-    buildMenu(win, openFileInWindow)
+    buildMenu(win, openFileInWindow, showOpenDialogAndOpen)
     loadShell(win)
   }
 

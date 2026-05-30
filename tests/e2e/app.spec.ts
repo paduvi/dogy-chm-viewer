@@ -62,6 +62,10 @@ test('drag-and-drop: openInNewWindow IPC with a path opens CHM in the existing e
   // We simulate that IPC call directly — no OS drag event needed.
   await expect(mainPage.locator('.content-empty')).toBeVisible()
 
+  // page.evaluate runs in the browser context; window.chm is injected by the
+  // Electron preload. DOM types are not in tsconfig.test.json (Node context),
+  // so we suppress the three unsafe-access rules for these evaluate calls.
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
   await mainPage.evaluate((chmPath) => window.chm.openInNewWindow(chmPath), CHM)
 
   // Main sees the window is empty (not in loadedWindowIds) → pushes LOAD_FILE
@@ -86,6 +90,7 @@ test('each CHM opens in a new window when one is already loaded', async () => {
     BrowserWindow.getAllWindows().map((w) => w.id)
   )
 
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
   await mainPage.evaluate((chmPath) => window.chm.openInNewWindow(chmPath), CHM)
 
   // Poll until a new BrowserWindow appears.
