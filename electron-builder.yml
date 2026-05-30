@@ -17,7 +17,13 @@ mac:
         - universal
   category: public.app-category.reference
   darkModeSupport: false
-  hardenedRuntime: true
+  # Hardened runtime enables Library Validation, which requires every loaded
+  # binary to share one Team ID. Ad-hoc signatures (used for unsigned CI builds)
+  # have no Team ID, so the hardened runtime rejects the Electron Framework at
+  # launch ("different Team IDs"). Keep it OFF for ad-hoc distribution.
+  # For a notarized Developer ID release, set this back to true (notarization
+  # requires hardened runtime) — the entitlements below cover Electron's needs.
+  hardenedRuntime: false
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
