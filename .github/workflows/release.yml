@@ -36,11 +36,13 @@ jobs:
       - name: Build universal DMG
         run: npm run dist:mac
         env:
-          # Code-signing — set these secrets in repo Settings → Secrets.
-          # Leave unset for unsigned builds (local testing / unsigned releases).
+          # Disable auto-discovery so electron-builder won't fail when signing
+          # secrets are absent. Set CSC_LINK + CSC_KEY_PASSWORD in repo
+          # Settings → Secrets to enable code-signing.
+          CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.CSC_LINK != '' }}
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-          # Notarization — optional; remove the notarize afterSign hook if unused.
+          # Notarization — optional; requires signing secrets above.
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
