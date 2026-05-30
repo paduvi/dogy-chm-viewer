@@ -1,0 +1,19 @@
+node_modules/
+out/
+dist/
+coverage/
+playwright-report/
+test-results/
+tmp-shots/
+*.local
+.env*
+*.d.ts.map
+.claude
+
+# Misc
+.DS_Store
+Thumbs.db
+*.log
+*.bak
+*.swp
+*.orig

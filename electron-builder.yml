@@ -1,0 +1,36 @@
+appId: com.dogy.chm-viewer
+productName: Dogy CHM Viewer
+copyright: Copyright © 2024
+
+directories:
+  buildResources: build
+  output: dist
+
+files:
+  - out/**/*
+  - '!**/*.map'
+
+mac:
+  target:
+    - target: dmg
+      arch:
+        - universal
+  category: public.app-category.reference
+  darkModeSupport: false
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+
+dmg:
+  title: "${productName} ${version}"
+  icon: build/icon.icns
+  contents:
+    - x: 130
+      y: 220
+    - x: 410
+      y: 220
+      type: link
+      path: /Applications
+
+afterSign: scripts/notarize.js
