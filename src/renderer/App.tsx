@@ -7,7 +7,7 @@ import { ContentView } from './components/ContentView'
 export function App() {
   const {
     doc, error, loading, currentUrl, canGoBack, canGoForward, sideTab,
-    openChm, navigate, back, forward, setSideTab, clearError
+    navigate, back, forward, setSideTab, clearError
   } = useChm()
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -15,25 +15,17 @@ export function App() {
     e.dataTransfer.dropEffect = 'copy'
   }, [])
 
-  const handleDrop = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault()
-      const file = e.dataTransfer.files[0]
-      if (!file || !file.name.toLowerCase().endsWith('.chm')) return
-      const filePath = (file as File & { path: string }).path
-      if (!filePath) return
-      void window.chm.openChm(filePath).then((result) => {
-        if (result.ok) {
-          const firstLocal = result.value.toc[0]?.localPath
-          if (firstLocal) {
-            const path = firstLocal.startsWith('/') ? firstLocal : '/' + firstLocal
-            navigate(`chm://${result.value.chmId}${path}`)
-          }
-        }
-      })
-    },
-    [navigate]
-  )
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    const file = e.dataTransfer.files[0]
+    if (!file || !file.name.toLowerCase().endsWith('.chm')) return
+    // file.path is empty in sandboxed Electron renderers (Electron 30+).
+    // webUtils.getPathForFile() is only available in the preload context, so it
+    // is bridged via window.chm.getPathForFile().
+    const filePath = window.chm.getPathForFile(file)
+    if (!filePath) return
+    void window.chm.openInNewWindow(filePath)
+  }, [])
 
   return (
     <div className="app" onDragOver={handleDragOver} onDrop={handleDrop}>
@@ -42,7 +34,7 @@ export function App() {
         loading={loading}
         canGoBack={canGoBack}
         canGoForward={canGoForward}
-        onOpen={() => void openChm()}
+        onOpen={() => void window.chm.openInNewWindow()}
         onBack={back}
         onForward={forward}
       />

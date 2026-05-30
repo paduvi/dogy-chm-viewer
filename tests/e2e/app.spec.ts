@@ -1,20 +1,15 @@
-import { test, expect, _electron as electron, type ElectronApplication } from '@playwright/test'
+import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
 import { join } from 'node:path'
-
-// End-to-end regression guard for the two bugs that bit us during Phase 4:
-//   1. Content view stayed blank (webview never loaded a page).
-//   2. ERR_ABORTED spam from competing/duplicate loadURL calls.
-// Launches the *built* app (run `electron-vite build` first — the test:e2e
-// script does this) and drives the real UI.
 
 const ROOT = join(__dirname, '..', '..')
 const ELECTRON_BIN =
   process.platform === 'darwin'
     ? join(ROOT, 'node_modules/electron/dist/Electron.app/Contents/MacOS/Electron')
     : join(ROOT, 'node_modules/electron/dist/electron')
-const CHM = join(ROOT, 'resources/esl_services_reference.chm')
+const CHM = join(ROOT, 'resources/PowerCollections.chm')
 
 let app: ElectronApplication
+let mainPage: Page
 const protocolErrors: string[] = []
 
 test.beforeAll(async () => {
@@ -25,69 +20,148 @@ test.beforeAll(async () => {
       protocolErrors.push(s.trim().split('\n')[0])
     }
   })
+  mainPage = await app.firstWindow()
+  await mainPage.waitForSelector('.toolbar', { timeout: 20_000 })
 })
 
 test.afterAll(async () => {
   await app?.close()
 })
 
-test('opens a CHM, renders content, and navigates the TOC without protocol errors', async () => {
-  const page = await app.firstWindow()
-  await page.waitForSelector('.toolbar', { timeout: 20_000 })
-
-  // Empty state until a file is opened.
-  await expect(page.locator('.content-empty')).toBeVisible()
-
-  // Mock the native open dialog (main process) to return our sample CHM.
-  await app.evaluate(({ ipcMain }, chmPath) => {
-    ipcMain.removeHandler('chm:open-dialog')
-    ipcMain.handle('chm:open-dialog', () => ({ ok: true, value: chmPath }))
-  }, CHM)
-
-  // Open → the sidebar TOC and a webview should appear.
-  await page.locator('.toolbar-btn:not(.nav-btn)').click()
-  await page.waitForSelector('.toc-list', { timeout: 15_000 })
-
-  // Bug #1 guard: the content view must actually load a chm:// page, not stay blank.
-  const initialSrc = await page.locator('webview').getAttribute('src')
-  expect(initialSrc, 'webview should load a chm:// page on open').toMatch(/^chm:\/\//)
-
-  // Let the initial page finish loading before navigating again. We deliberately
-  // navigate at a NORMAL (settled) pace: the double-load bug errored even on a
-  // single settled navigation, whereas interrupting an in-flight load produces a
-  // benign, expected ERR_ABORTED that no app can avoid.
-  await page.waitForTimeout(1500)
-
-  // Navigate to a different TOC entry and confirm the webview moves to a new page.
-  await page.locator('.toc-row:not(.toc-row--active)').first().click()
+// Close any extra BrowserWindows from the main process so Playwright page
+// objects for webviews are never touched (closing them reloads the parent
+// renderer, which wipes the loaded CHM state and breaks subsequent tests).
+test.afterEach(async () => {
+  const mainId = await app.evaluate(({ BrowserWindow }) =>
+    Math.min(...BrowserWindow.getAllWindows().map((w) => w.id))
+  )
+  await app.evaluate(({ BrowserWindow }, id) => {
+    BrowserWindow.getAllWindows()
+      .filter((w) => w.id !== id)
+      .forEach((w) => w.close())
+  }, mainId)
+  // Poll until only the main window remains (win.close() is async).
   await expect
-    .poll(async () => page.locator('webview').getAttribute('src'), { timeout: 10_000 })
+    .poll(
+      async () =>
+        app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length),
+      { timeout: 5_000 }
+    )
+    .toBe(1)
+})
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+test('empty state shows on launch', async () => {
+  await expect(mainPage.locator('.content-empty')).toBeVisible()
+})
+
+test('drag-and-drop: openInNewWindow IPC with a path opens CHM in the existing empty window', async () => {
+  // The drop handler calls window.chm.getPathForFile(file) (bridges
+  // webUtils.getPathForFile), then window.chm.openInNewWindow(filePath).
+  // We simulate that IPC call directly — no OS drag event needed.
+  await expect(mainPage.locator('.content-empty')).toBeVisible()
+
+  await mainPage.evaluate((chmPath) => window.chm.openInNewWindow(chmPath), CHM)
+
+  // Main sees the window is empty (not in loadedWindowIds) → pushes LOAD_FILE
+  // → renderer's onLoadFile fires → openChmPath → .toc-list appears.
+  await mainPage.waitForSelector('.toc-list', { timeout: 20_000 })
+  const src = await mainPage.locator('webview').getAttribute('src')
+  expect(src, 'webview must show a chm:// URL').toMatch(/^chm:\/\//)
+
+  // No second window created — the existing empty window was reused.
+  const winCount = await app.evaluate(({ BrowserWindow }) =>
+    BrowserWindow.getAllWindows().length
+  )
+  expect(winCount, 'drag onto empty window must reuse it, not open a second').toBe(1)
+})
+
+test('each CHM opens in a new window when one is already loaded', async () => {
+  // Precondition: mainPage has a CHM loaded.
+  await mainPage.waitForSelector('.toc-list', { timeout: 10_000 })
+
+  // Snapshot the current BrowserWindow IDs.
+  const idsBefore = await app.evaluate(({ BrowserWindow }) =>
+    BrowserWindow.getAllWindows().map((w) => w.id)
+  )
+
+  await mainPage.evaluate((chmPath) => window.chm.openInNewWindow(chmPath), CHM)
+
+  // Poll until a new BrowserWindow appears.
+  let newWinId: number | undefined
+  await expect
+    .poll(
+      async () => {
+        const ids = await app.evaluate(({ BrowserWindow }) =>
+          BrowserWindow.getAllWindows().map((w) => w.id)
+        )
+        newWinId = ids.find((id) => !idsBefore.includes(id))
+        return ids.length
+      },
+      { timeout: 10_000 }
+    )
+    .toBeGreaterThan(idsBefore.length)
+
+  // Verify the new window loads the CHM by polling its title from the main
+  // process. The title is set in ipc.ts after OPEN_CHM returns — this is the
+  // most reliable indicator without depending on Playwright page detection
+  // (app.windows() includes webview guest pages, making page identification brittle).
+  await expect
+    .poll(
+      async () =>
+        app.evaluate(({ BrowserWindow }, id) => {
+          const win = BrowserWindow.getAllWindows().find((w) => w.id === id)
+          return win?.getTitle() ?? ''
+        }, newWinId!),
+      { timeout: 30_000, message: 'new window title should become the CHM title' }
+    )
+    .toContain('PowerCollections')
+
+  expect(newWinId, 'a new BrowserWindow must have been created').toBeDefined()
+})
+
+test('TOC navigation works', async () => {
+  await mainPage.waitForSelector('.toc-list', { timeout: 10_000 })
+
+  const initialSrc = await mainPage.locator('webview').getAttribute('src')
+  await mainPage.waitForTimeout(1500)
+
+  await mainPage.locator('.toc-row:not(.toc-row--active)').first().click()
+  await expect
+    .poll(async () => mainPage.locator('webview').getAttribute('src'), { timeout: 10_000 })
     .not.toBe(initialSrc)
-  const afterSrc = await page.locator('webview').getAttribute('src')
-  expect(afterSrc).toMatch(/^chm:\/\//)
-  await page.waitForTimeout(1500) // let this load settle too
+  expect(await mainPage.locator('webview').getAttribute('src')).toMatch(/^chm:\/\//)
+  await mainPage.waitForTimeout(1500)
+})
 
-  // Index tab should list keyword entries.
-  await page.locator('.side-tab', { hasText: 'Index' }).click()
-  await page.waitForSelector('.index-item', { timeout: 5_000 })
-  expect(await page.locator('.index-item').count()).toBeGreaterThan(0)
+test('index tab lists entries', async () => {
+  await mainPage.waitForSelector('.toc-list', { timeout: 10_000 })
 
-  // Full-text search: type a query, wait for the index to build + results, then
-  // click a result and confirm it navigates the content view.
-  await page.locator('.side-tab', { hasText: 'Search' }).click()
-  await page.locator('.search-input').fill('service')
-  await page.waitForSelector('.search-result', { timeout: 20_000 }) // first query builds the index
-  expect(await page.locator('.search-result').count()).toBeGreaterThan(0)
+  await mainPage.locator('.side-tab', { hasText: 'Index' }).click()
+  await mainPage.waitForSelector('.index-item', { timeout: 5_000 })
+  expect(await mainPage.locator('.index-item').count()).toBeGreaterThan(0)
+})
 
-  const beforeSearchNav = await page.locator('webview').getAttribute('src')
-  await page.locator('.search-result').first().click()
+test('full-text search returns results and navigates', async () => {
+  // .toc-list is only in the DOM when the Contents tab is active; use .side-tabs
+  // as the CHM-loaded indicator (always present when doc is set).
+  await mainPage.waitForSelector('.side-tabs', { timeout: 10_000 })
+
+  await mainPage.locator('.side-tab', { hasText: 'Search' }).click()
+  await mainPage.locator('.search-input').fill('collection')
+  await mainPage.waitForSelector('.search-result', { timeout: 20_000 })
+  expect(await mainPage.locator('.search-result').count()).toBeGreaterThan(0)
+
+  const beforeSrc = await mainPage.locator('webview').getAttribute('src')
+  await mainPage.locator('.search-result').first().click()
   await expect
-    .poll(async () => page.locator('webview').getAttribute('src'), { timeout: 10_000 })
-    .not.toBe(beforeSearchNav)
-  expect(await page.locator('webview').getAttribute('src')).toMatch(/^chm:\/\//)
-  await page.waitForTimeout(1500) // let it settle
+    .poll(async () => mainPage.locator('webview').getAttribute('src'), { timeout: 10_000 })
+    .not.toBe(beforeSrc)
+  expect(await mainPage.locator('webview').getAttribute('src')).toMatch(/^chm:\/\//)
+  await mainPage.waitForTimeout(1500)
+})
 
-  // Bug #2 guard: settled navigations (TOC + search-result) produce NO
-  // ERR_ABORTED / GUEST_VIEW_MANAGER_CALL errors (the double-load regression).
+test('no ERR_ABORTED or protocol errors during any navigation', () => {
   expect(protocolErrors, protocolErrors.join('\n')).toEqual([])
 })

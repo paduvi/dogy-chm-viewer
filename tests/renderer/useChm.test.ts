@@ -4,13 +4,15 @@ import { renderHook, act } from '@testing-library/react'
 import { useChm, chmUrl } from '../../src/renderer/hooks/useChm'
 import type { ChmDocument } from '../../src/shared/types'
 
-// Minimal window.chm stub — the hook calls onMenuAction on every mount.
+// Minimal window.chm stub — the hook wires onLoadFile then calls rendererMounted on mount.
 const noop = (): (() => void) => () => undefined
 beforeEach(() => {
   const w = window as unknown as { chm: Record<string, unknown> }
   if (!w.chm) {
     w.chm = {
-      openDialog: vi.fn(),
+      rendererMounted: vi.fn(),
+      onLoadFile: noop,
+      openInNewWindow: vi.fn().mockResolvedValue(undefined),
       openChm: vi.fn(),
       getToc: vi.fn(),
       getIndex: vi.fn(),
@@ -18,7 +20,10 @@ beforeEach(() => {
       onMenuAction: noop
     }
   } else {
-    // Already set by a describe block — just ensure onMenuAction is present.
+    // Already set by a describe block — ensure required methods are present.
+    w.chm.rendererMounted ??= vi.fn()
+    w.chm.onLoadFile ??= noop
+    w.chm.openInNewWindow ??= vi.fn().mockResolvedValue(undefined)
     w.chm.onMenuAction ??= noop
   }
 })
@@ -107,15 +112,23 @@ describe('useChm navigation history', () => {
   })
 })
 
+// ── Pending-file loading (replaces the old openChm() dialog flow) ─────────────
+//
+// Main queues a file path for the window before the renderer mounts.
+// The hook calls window.chm.getPendingFile() on mount; if a path is returned
+// it immediately loads the CHM via window.chm.openChm().
+
 type ChmApiMock = {
-  openDialog: ReturnType<typeof vi.fn>
+  rendererMounted: ReturnType<typeof vi.fn>
+  onLoadFile: ReturnType<typeof vi.fn>
+  openInNewWindow: ReturnType<typeof vi.fn>
   openChm: ReturnType<typeof vi.fn>
   getToc: ReturnType<typeof vi.fn>
   getIndex: ReturnType<typeof vi.fn>
   search: ReturnType<typeof vi.fn>
 }
 
-describe('useChm.openChm', () => {
+describe('useChm LOAD_FILE push (new-window flow)', () => {
   const doc: ChmDocument = {
     chmId: 'doc-1',
     filePath: '/tmp/help.chm',
@@ -127,9 +140,10 @@ describe('useChm.openChm', () => {
   let chm: ChmApiMock
 
   beforeEach(() => {
-    // Stub the preload bridge (window.chm) that openChm calls.
     chm = {
-      openDialog: vi.fn().mockResolvedValue({ ok: true, value: '/tmp/help.chm' }),
+      rendererMounted: vi.fn(),
+      onLoadFile: vi.fn().mockReturnValue(() => undefined), // default: no-op subscription
+      openInNewWindow: vi.fn().mockResolvedValue(undefined),
       openChm: vi.fn().mockResolvedValue({ ok: true, value: doc }),
       getToc: vi.fn(),
       getIndex: vi.fn(),
@@ -139,32 +153,79 @@ describe('useChm.openChm', () => {
     w.chm = { ...chm, onMenuAction: () => () => undefined }
   })
 
-  it('loads the document and navigates to the first TOC entry', async () => {
-    const { result } = renderHook(() => useChm())
-    await act(async () => {
-      await result.current.openChm()
+  it('calls rendererMounted on mount so main knows the listener is ready', () => {
+    renderHook(() => useChm())
+    expect(chm.rendererMounted).toHaveBeenCalledOnce()
+  })
+
+  it('opens a file when main pushes LOAD_FILE after receiving RENDERER_MOUNTED', async () => {
+    // Simulate the new-window flow: onLoadFile captures the handler (registered
+    // before rendererMounted is called), then main pushes the file path.
+    let capturedHandler: ((fp: string) => void) | null = null
+    chm.onLoadFile.mockImplementation((handler: (fp: string) => void) => {
+      capturedHandler = handler
+      return () => undefined
     })
+
+    const { result } = renderHook(() => useChm())
+    await act(async () => { await Promise.resolve() })
+
+    // Simulate main's RENDERER_MOUNTED handler pushing the queued file.
+    await act(async () => {
+      capturedHandler?.('/tmp/new-window.chm')
+      await Promise.resolve()
+    })
+
+    expect(chm.openChm).toHaveBeenCalledWith('/tmp/new-window.chm')
     expect(result.current.doc?.chmId).toBe('doc-1')
     expect(result.current.currentUrl).toBe('chm://doc-1/intro.htm')
     expect(result.current.error).toBeNull()
   })
 
-  it('surfaces an error when openChm fails', async () => {
-    chm.openChm.mockResolvedValueOnce({ ok: false, error: 'boom' })
-    const { result } = renderHook(() => useChm())
-    await act(async () => {
-      await result.current.openChm()
+  it('opens a file when main pushes LOAD_FILE for drag-drop on an existing window', async () => {
+    let capturedHandler: ((fp: string) => void) | null = null
+    chm.onLoadFile.mockImplementation((handler: (fp: string) => void) => {
+      capturedHandler = handler
+      return () => undefined
     })
+
+    const { result } = renderHook(() => useChm())
+    await act(async () => { await Promise.resolve() })
+
+    await act(async () => {
+      capturedHandler?.('/tmp/dragged.chm')
+      await Promise.resolve()
+    })
+
+    expect(chm.openChm).toHaveBeenCalledWith('/tmp/dragged.chm')
+    expect(result.current.doc?.chmId).toBe('doc-1')
+    expect(result.current.currentUrl).toBe('chm://doc-1/intro.htm')
+  })
+
+  it('surfaces an error when openChm fails', async () => {
+    let capturedHandler: ((fp: string) => void) | null = null
+    chm.onLoadFile.mockImplementation((handler: (fp: string) => void) => {
+      capturedHandler = handler
+      return () => undefined
+    })
+    chm.openChm.mockResolvedValueOnce({ ok: false, error: 'boom' })
+
+    const { result } = renderHook(() => useChm())
+    await act(async () => { await Promise.resolve() })
+    await act(async () => {
+      capturedHandler?.('/tmp/bad.chm')
+      await Promise.resolve()
+    })
+
     expect(result.current.error).toBe('boom')
     expect(result.current.doc).toBeNull()
   })
 
-  it('does nothing when the dialog is cancelled', async () => {
-    chm.openDialog.mockResolvedValueOnce({ ok: true, value: null })
+  it('does nothing when no file is pushed (normal empty-window launch)', async () => {
+    // rendererMounted fires but main has no pending file → no LOAD_FILE push.
     const { result } = renderHook(() => useChm())
-    await act(async () => {
-      await result.current.openChm()
-    })
+    await act(async () => { await Promise.resolve() })
+    expect(chm.openChm).not.toHaveBeenCalled()
     expect(result.current.doc).toBeNull()
     expect(result.current.currentUrl).toBeNull()
   })

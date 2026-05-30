@@ -40,6 +40,13 @@ export const IPC = {
   SEARCH: 'chm:search',
   READ_PAGE: 'chm:read-page',
   OPEN_DIALOG: 'chm:open-dialog',
+  // Renderer signals main that it has mounted and wired up the onLoadFile listener.
+  // Main responds by pushing LOAD_FILE if a file was queued for this window.
+  RENDERER_MOUNTED: 'chm:renderer-mounted',
+  // Main pushes a file path to a mounted renderer.
+  LOAD_FILE: 'chm:load-file',
+  // Renderer asks main to open a file (or show dialog) in a new/empty window.
+  OPEN_IN_NEW_WINDOW: 'chm:open-in-new-window',
   // Main → renderer menu commands
   MENU_ACTION: 'menu:action'
 } as const

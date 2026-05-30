@@ -3,23 +3,29 @@ import { IPC } from '../shared/types'
 import type { MenuActionPayload } from '../shared/types'
 import { loadRecentFiles } from './recent-files'
 
-// Send a typed menu command to the focused renderer.
+// Send a typed menu command to the focused renderer (back/forward/search).
 function send(win: BrowserWindow | null, payload: MenuActionPayload): void {
   win?.webContents.send(IPC.MENU_ACTION, payload)
 }
 
-function buildRecentSubmenu(win: BrowserWindow | null): MenuItemConstructorOptions[] {
+function buildRecentSubmenu(
+  openFile: (filePath: string) => void
+): MenuItemConstructorOptions[] {
   const recent = loadRecentFiles()
   if (recent.length === 0) {
     return [{ label: 'No Recent Files', enabled: false }]
   }
   return recent.map((filePath) => ({
     label: filePath.split('/').pop() ?? filePath,
-    click: () => send(win, { action: 'open-recent', filePath })
+    // Open in a new/empty window — handled entirely in main, no renderer IPC.
+    click: () => openFile(filePath)
   }))
 }
 
-export function buildMenu(win: BrowserWindow | null): void {
+export function buildMenu(
+  win: BrowserWindow | null,
+  openFile: (filePath: string) => void
+): void {
   const template: MenuItemConstructorOptions[] = [
     // ── Application ──────────────────────────────────────────────────────────
     {
@@ -44,11 +50,15 @@ export function buildMenu(win: BrowserWindow | null): void {
         {
           label: 'Open…',
           accelerator: 'CmdOrCtrl+O',
-          click: () => send(win, { action: 'open' })
+          // Show the dialog in main and open the result in a new/empty window.
+          click: () => {
+            const { showOpenDialogAndOpen } = require('./index') as typeof import('./index')
+            void showOpenDialogAndOpen(win ?? undefined)
+          }
         },
         {
           label: 'Open Recent',
-          submenu: buildRecentSubmenu(win)
+          submenu: buildRecentSubmenu(openFile)
         },
         { type: 'separator' },
         { role: 'close' }

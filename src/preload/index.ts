@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { ChmDocument, TocNode, IndexEntry, SearchResult, IpcResult, MenuActionPayload } from '../shared/types'
 import { IPC } from '../shared/types'
 
@@ -6,8 +6,29 @@ import { IPC } from '../shared/types'
 // Only these methods cross the context boundary — no raw IPC in the renderer.
 
 const chmApi = {
-  openDialog: (): Promise<IpcResult<string | null>> =>
-    ipcRenderer.invoke(IPC.OPEN_DIALOG) as Promise<IpcResult<string | null>>,
+  // Resolve a File object's real filesystem path. `file.path` returns an empty
+  // string in sandboxed renderers (Electron 30+); webUtils is only available in
+  // preload context, so we bridge it here.
+  getPathForFile: (file: File): string => webUtils.getPathForFile(file),
+
+  // Signal main that this renderer has mounted and the onLoadFile listener is
+  // wired. Main will push LOAD_FILE if a file was queued for this window.
+  rendererMounted: (): void => {
+    ipcRenderer.send(IPC.RENDERER_MOUNTED)
+  },
+
+  // Subscribe to file-path pushes from main (used when reusing an existing
+  // empty window whose mount effect already ran). Returns an unsubscribe fn.
+  onLoadFile: (handler: (filePath: string) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, filePath: string): void =>
+      handler(filePath)
+    ipcRenderer.on(IPC.LOAD_FILE, listener)
+    return () => ipcRenderer.removeListener(IPC.LOAD_FILE, listener)
+  },
+
+  // Ask main to open filePath (or show a dialog if omitted) in a new/empty window.
+  openInNewWindow: (filePath?: string): Promise<void> =>
+    ipcRenderer.invoke(IPC.OPEN_IN_NEW_WINDOW, filePath ?? null) as Promise<void>,
 
   openChm: (filePath: string): Promise<IpcResult<ChmDocument>> =>
     ipcRenderer.invoke(IPC.OPEN_CHM, filePath) as Promise<IpcResult<ChmDocument>>,

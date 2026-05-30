@@ -11,8 +11,6 @@ export interface ChmState {
   canGoBack: boolean
   canGoForward: boolean
   sideTab: SideTab
-  openChm: () => Promise<void>
-  openChmPath: (filePath: string) => Promise<void>
   navigate: (url: string) => void
   back: () => void
   forward: () => void
@@ -90,31 +88,37 @@ export function useChm(): ChmState {
     if (firstLocal) navigate(chmUrl(newDoc.chmId, firstLocal))
   }, [navigate])
 
-  const openChm = useCallback(async () => {
-    setError(null)
-    const dialogResult = await window.chm.openDialog()
-    if (!dialogResult.ok) { setError(dialogResult.error); return }
-    if (dialogResult.value === null) return
-    await openChmPath(dialogResult.value)
-  }, [openChmPath])
+  // Subscribe to LOAD_FILE pushes from main, then signal that we are ready.
+  // Order matters: subscribe FIRST so the listener is wired before we tell
+  // main it can push (rendererMounted). Main pushes LOAD_FILE only after this
+  // signal, guaranteeing no message is lost to a listener-not-yet-registered race.
+  useEffect(() => {
+    const unsub = window.chm.onLoadFile((filePath) => {
+      void openChmPath(filePath)
+    })
+    // Tell main the listener is ready. For new windows main will push the
+    // queued file path now. For existing windows this is a no-op (no pending file).
+    window.chm.rendererMounted()
+    return unsub
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []) // intentionally empty — subscribe + signal exactly once on mount
 
-  // Handle native menu commands (⌘O, ⌘[, ⌘], ⌘F, Open Recent).
+  // Handle native menu commands: back/forward/search only.
+  // 'open' and 'open-recent' are now fully handled in the main process.
   useEffect(() => {
     const unsubscribe = window.chm.onMenuAction((payload: MenuActionPayload) => {
       switch (payload.action) {
-        case 'open': void openChm(); break
         case 'back': back(); break
         case 'forward': forward(); break
         case 'search': setSideTab('search'); break
-        case 'open-recent': void openChmPath(payload.filePath); break
       }
     })
     return unsubscribe
-  }, [openChm, back, forward, openChmPath])
+  }, [back, forward])
 
   return {
     doc, error, loading, currentUrl, canGoBack, canGoForward, sideTab,
-    openChm, openChmPath, navigate, back, forward,
+    navigate, back, forward,
     setSideTab,
     clearError: () => setError(null)
   }

@@ -39,4 +39,10 @@ dmg:
       type: link
       path: /Applications
 
+fileAssociations:
+  - ext: chm
+    name: CHM Help File
+    description: Compiled HTML Help file
+    role: Viewer
+
 afterSign: scripts/notarize.js
