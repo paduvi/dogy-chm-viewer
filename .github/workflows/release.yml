@@ -34,21 +34,20 @@ jobs:
         run: npm test
 
       - name: Build universal DMG
-        run: npm run dist:mac
+        # electron-vite build + electron-builder. --publish never disables
+        # electron-builder's own GitHub publishing (which is otherwise triggered
+        # implicitly by the git tag); the upload step below handles release assets.
+        run: npx electron-vite build && npx electron-builder --mac --universal --publish never
         env:
-          # Disable auto-discovery so electron-builder won't fail when signing
-          # secrets are absent. Set CSC_LINK + CSC_KEY_PASSWORD in repo
-          # Settings → Secrets to enable code-signing.
-          CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.CSC_LINK != '' }}
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-          # Notarization — optional; requires signing secrets above.
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Build an unsigned app. Setting this to "false" stops electron-builder
+          # from searching for a signing identity (which fails on CI runners and
+          # produced the "<repo> not a file" error). To enable code-signing,
+          # add CSC_LINK + CSC_KEY_PASSWORD secrets and set this to "true".
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
 
       - name: Upload DMG to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*.dmg
+          fail_on_unmatched_files: true
           generate_release_notes: true

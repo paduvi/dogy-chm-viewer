@@ -2,6 +2,7 @@
   "name": "dogy-chm-viewer",
   "version": "0.1.0",
   "description": "macOS CHM file viewer — Electron + React + TypeScript",
+  "author": "paduvi",
   "private": true,
   "main": "./out/main/index.js",
   "scripts": {
